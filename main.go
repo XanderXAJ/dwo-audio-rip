@@ -86,6 +86,7 @@ func main() {
 		fmt.Printf("Stream %d: %d channels\n", streamIndex, channels)
 
 		// Convert each substream by of its pair of stereo channels
+		// This assumes everything has at least two channels. Since I'm targeting music, this is acceptable.
 		for channelIndex := 0; channelIndex <= channels - 2; channelIndex += 2 {
 			err := convertSubstreamStereoPair(path, streamIndex, channelIndex)
 			if err != nil {

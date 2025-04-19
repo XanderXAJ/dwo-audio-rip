@@ -2,57 +2,45 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path"
 	"strconv"
-	"strings"
 )
 
 // This code assumes you've already extracted the data files,
 // e.g. 0xeda82cc0.srsa.
 
-// Get stream count from metadata
-func streamCount(path string) (int, error) {
-	var stdout bytes.Buffer
-	metadataCmd := exec.Command("vgmstream-cli", "-m", path)
-	metadataCmd.Stdout = &stdout
-	metadataCmd.Stderr = os.Stderr
-	if err := metadataCmd.Run(); err != nil {
-		return -1, err
-	}
-
-	var streamCount int
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		if strings.HasPrefix(line, "stream count:") {
-			fmt.Sscanf(strings.TrimSpace(line), "stream count: %d", &streamCount)
-			break
-		}
-	}
-
-	return streamCount, nil
+type StreamInfo struct {
+	Channels   int       `json:"channels"`
+	StreamInfo IndexInfo `json:"streamInfo"`
 }
 
-// Get channel count from metadata
-func channels(path string, streamIndex int) (int, error) {
+type IndexInfo struct {
+	Index int    `json:"index"`
+	Name  string `json:"name"`
+	Total int    `json:"total"`
+}
+
+func infoFromStream(path string, streamIndex int) (*StreamInfo, error) {
+	// Gather JSON stream information
 	var stdout bytes.Buffer
-	metadataCmd := exec.Command("vgmstream-cli", "-m", path, "-s", strconv.Itoa(streamIndex))
+	metadataCmd := exec.Command("vgmstream-cli", "-I", "-m", path, "-s", strconv.Itoa(streamIndex))
 	metadataCmd.Stdout = &stdout
 	metadataCmd.Stderr = os.Stderr
 	if err := metadataCmd.Run(); err != nil {
-		return -1, err
+		return nil, fmt.Errorf("failed to extract stream info: %w", err)
 	}
 
-	var channelCount int
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		if strings.HasPrefix(line, "channels:") {
-			fmt.Sscanf(strings.TrimSpace(line), "channels: %d", &channelCount)
-			break
-		}
+	// Parse JSON stream information
+	var si StreamInfo
+	if err := json.Unmarshal(stdout.Bytes(), &si); err != nil {
+		return nil, fmt.Errorf("failed to unmarshall stream JSON: %w", err)
 	}
 
-	return channelCount, nil
+	return &si, nil
 }
 
 func convertSubstreamStereoPair(path string, streamIndex int, channelIndex int) error {
@@ -72,25 +60,25 @@ func main() {
 	}
 	path := path.Clean(os.Args[1])
 
-	streamCount, err := streamCount(path)
+	containerInfo, err := infoFromStream(path, 0)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println("Stream count:", streamCount)
+	fmt.Println("Stream total:", containerInfo.StreamInfo.Total)
 
-	for streamIndex := 1; streamIndex <= streamCount; streamIndex++ {
+	for streamIndex := 1; streamIndex <= containerInfo.StreamInfo.Total; streamIndex++ {
 
-		channels, err := channels(path, streamIndex)
+		streamInfo, err := infoFromStream(path, streamIndex)
 		if err != nil {
 			panic(err)
 		}
 
-		fmt.Printf("Stream %d: %d channels\n", streamIndex, channels)
+		fmt.Printf("Stream %d: %d channels\n", streamIndex, streamInfo.Channels)
 
 		// Convert each substream by of its pair of stereo channels
 		// This assumes everything has at least two channels. Since I'm targeting music, this is acceptable.
-		for channelIndex := 0; channelIndex <= channels - 2; channelIndex += 2 {
+		for channelIndex := 0; channelIndex <= streamInfo.Channels-2; channelIndex += 2 {
 			err := convertSubstreamStereoPair(path, streamIndex, channelIndex)
 			if err != nil {
 				panic(err)

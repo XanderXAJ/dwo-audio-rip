@@ -80,15 +80,16 @@ func convertSubstreamStereoStemLoop(path string, streamIndex int, channelIndex i
 	return metadataCmd.Run()
 }
 
+// TODO: Configurable output directory
 func main() {
 	var (
 		aioEnabled   bool
 		introEnabled bool
 		loopEnabled  bool
 	)
-	flag.BoolVar(&aioEnabled, "aio", false, "Extract all-in-one song loop stems")
-	flag.BoolVar(&introEnabled, "intro", true, "Extract intro stems")
-	flag.BoolVar(&loopEnabled, "loop", true, "Extract loop stems")
+	flag.BoolVar(&aioEnabled, "aio", false, "Output all-in-one song loop stems")
+	flag.BoolVar(&introEnabled, "intro", true, "Output intro stems")
+	flag.BoolVar(&loopEnabled, "loop", true, "Output loop stems")
 	flag.Parse()
 
 	if flag.NArg() < 1 {

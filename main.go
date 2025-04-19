@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+// This code assumes you've already extracted the data files,
+// e.g. 0xeda82cc0.srsa.
+
 // Get stream count from metadata
 func streamCount(path string) (int, error) {
 	var stdout bytes.Buffer
@@ -64,7 +67,7 @@ func convertSubstreamStereoPair(path string, streamIndex int, channelIndex int) 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Printf("Usage: %s <path>\n", os.Args[0])
-		fmt.Println("Extracts audio streams from the given file")
+		fmt.Println("Extracts audio streams from the given file, e.g. 0xeda82cc0.srsa")
 		os.Exit(1)
 	}
 	path := path.Clean(os.Args[1])

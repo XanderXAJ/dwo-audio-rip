@@ -17,7 +17,7 @@ const VgmstreamCLI = "vgmstream-cli"
 // e.g. 0xeda82cc0.srsa.
 
 type VgmStreamInfo struct {
-	Channels   int       `json:"channels"`
+	Channels   int        `json:"channels"`
 	StreamInfo StreamInfo `json:"streamInfo"`
 }
 
@@ -59,7 +59,7 @@ func convertSubstreamStereoStemIntro(path string, streamIndex int, channelIndex 
 	metadataCmd := exec.Command(VgmstreamCLI, path,
 		"-s", strconv.Itoa(streamIndex),
 		"-2", strconv.Itoa(channelIndex),
-		"-w", // Convert in the original sample format
+		"-w",       // Convert in the original sample format
 		"-l", "-1", // Remove looping section
 		"-f", "0", // Remove fade out
 		"-o", fmt.Sprintf("?s_%02d_intro.wav", channelIndex),
@@ -82,9 +82,9 @@ func convertSubstreamStereoStemLoop(path string, streamIndex int, channelIndex i
 
 func main() {
 	var (
-		aioEnabled bool
+		aioEnabled   bool
 		introEnabled bool
-		loopEnabled bool
+		loopEnabled  bool
 	)
 	flag.BoolVar(&aioEnabled, "aio", false, "Extract all-in-one song loop stems")
 	flag.BoolVar(&introEnabled, "intro", true, "Extract intro stems")

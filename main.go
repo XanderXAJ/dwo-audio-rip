@@ -13,18 +13,18 @@ import (
 // This code assumes you've already extracted the data files,
 // e.g. 0xeda82cc0.srsa.
 
-type StreamInfo struct {
+type VgmStreamInfo struct {
 	Channels   int       `json:"channels"`
-	StreamInfo IndexInfo `json:"streamInfo"`
+	StreamInfo StreamInfo `json:"streamInfo"`
 }
 
-type IndexInfo struct {
+type StreamInfo struct {
 	Index int    `json:"index"`
 	Name  string `json:"name"`
 	Total int    `json:"total"`
 }
 
-func infoFromStream(path string, streamIndex int) (*StreamInfo, error) {
+func infoFromStream(path string, streamIndex int) (*VgmStreamInfo, error) {
 	// Gather JSON stream information
 	var stdout bytes.Buffer
 	metadataCmd := exec.Command("vgmstream-cli", "-I", "-m", path, "-s", strconv.Itoa(streamIndex))
@@ -35,7 +35,7 @@ func infoFromStream(path string, streamIndex int) (*StreamInfo, error) {
 	}
 
 	// Parse JSON stream information
-	var si StreamInfo
+	var si VgmStreamInfo
 	if err := json.Unmarshal(stdout.Bytes(), &si); err != nil {
 		return nil, fmt.Errorf("failed to unmarshall stream JSON: %w", err)
 	}

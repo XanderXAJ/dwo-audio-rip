@@ -47,6 +47,7 @@ func convertSubstreamStereoPair(path string, streamIndex int, channelIndex int) 
 	metadataCmd := exec.Command("vgmstream-cli", path,
 		"-s", strconv.Itoa(streamIndex),
 		"-2", strconv.Itoa(channelIndex),
+		"-w", // Convert in the original sample format
 		"-o", fmt.Sprintf("?f#?s_?n-%02d.wav", channelIndex),
 	)
 	return metadataCmd.Run()

@@ -11,6 +11,8 @@ import (
 	"strconv"
 )
 
+const VgmstreamCLI = "vgmstream-cli"
+
 // This code assumes you've already extracted the data files,
 // e.g. 0xeda82cc0.srsa.
 
@@ -28,7 +30,7 @@ type StreamInfo struct {
 func infoFromStream(path string, streamIndex int) (*VgmStreamInfo, error) {
 	// Gather JSON stream information
 	var stdout bytes.Buffer
-	metadataCmd := exec.Command("vgmstream-cli", "-I", "-m", path, "-s", strconv.Itoa(streamIndex))
+	metadataCmd := exec.Command(VgmstreamCLI, "-I", "-m", path, "-s", strconv.Itoa(streamIndex))
 	metadataCmd.Stdout = &stdout
 	metadataCmd.Stderr = os.Stderr
 	if err := metadataCmd.Run(); err != nil {
@@ -45,7 +47,7 @@ func infoFromStream(path string, streamIndex int) (*VgmStreamInfo, error) {
 }
 
 func convertSubstreamStereoStem(path string, streamIndex int, channelIndex int) error {
-	metadataCmd := exec.Command("vgmstream-cli", path,
+	metadataCmd := exec.Command(VgmstreamCLI, path,
 		"-s", strconv.Itoa(streamIndex),
 		"-2", strconv.Itoa(channelIndex),
 		"-o", fmt.Sprintf("?s_%02d_aio.wav", channelIndex),
@@ -54,7 +56,7 @@ func convertSubstreamStereoStem(path string, streamIndex int, channelIndex int) 
 }
 
 func convertSubstreamStereoStemIntro(path string, streamIndex int, channelIndex int) error {
-	metadataCmd := exec.Command("vgmstream-cli", path,
+	metadataCmd := exec.Command(VgmstreamCLI, path,
 		"-s", strconv.Itoa(streamIndex),
 		"-2", strconv.Itoa(channelIndex),
 		"-w", // Convert in the original sample format
@@ -66,7 +68,7 @@ func convertSubstreamStereoStemIntro(path string, streamIndex int, channelIndex 
 }
 
 func convertSubstreamStereoStemLoop(path string, streamIndex int, channelIndex int) error {
-	metadataCmd := exec.Command("vgmstream-cli", path,
+	metadataCmd := exec.Command(VgmstreamCLI, path,
 		"-s", strconv.Itoa(streamIndex),
 		"-2", strconv.Itoa(channelIndex),
 		"-w", // Convert in the original sample format

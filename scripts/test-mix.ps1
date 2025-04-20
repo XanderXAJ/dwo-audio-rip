@@ -1,6 +1,6 @@
 param (
-	[Parameter(Mandatory = $true)][int]$streamIndex = 0,
-	[Parameter(Mandatory = $true)][int]$subIndex = 0,
+	[Parameter(Mandatory = $true)][int]$streamIndex,
+	[int]$subIndex = 0,
 	[string]$inputDirectory = "rip",
 	[string]$outputDirectory = "mix",
 	[int]$loops = 2

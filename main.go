@@ -27,10 +27,13 @@ type StreamInfo struct {
 	Total int    `json:"total"`
 }
 
-func infoFromStream(path string, streamIndex int) (*VgmStreamInfo, error) {
+// TODO: Create bad_streams list to ignore bad streams for specific filenames
+// e.g. streams 1 and 48 in 0xeda82cc0.srsa
+
+func infoFromStream(config *CliConfig, streamIndex int) (*VgmStreamInfo, error) {
 	// Gather JSON stream information
 	var stdout bytes.Buffer
-	metadataCmd := exec.Command(VgmstreamCLI, "-I", "-m", path, "-s", strconv.Itoa(streamIndex))
+	metadataCmd := exec.Command(VgmstreamCLI, "-I", "-m", config.InputPath, "-s", strconv.Itoa(streamIndex))
 	metadataCmd.Stdout = &stdout
 	metadataCmd.Stderr = os.Stderr
 	if err := metadataCmd.Run(); err != nil {
@@ -46,33 +49,33 @@ func infoFromStream(path string, streamIndex int) (*VgmStreamInfo, error) {
 	return &si, nil
 }
 
-func convertSubstreamStereoStem(path string, streamIndex int, channelIndex int) error {
-	metadataCmd := exec.Command(VgmstreamCLI, path,
+func convertSubstreamStereoStemAIO(config *CliConfig, streamIndex int, channelIndex int) error {
+	metadataCmd := exec.Command(VgmstreamCLI, config.InputPath,
 		"-s", strconv.Itoa(streamIndex),
 		"-2", strconv.Itoa(channelIndex),
-		"-o", fmt.Sprintf("?s_%02d_aio.wav", channelIndex),
+		"-o", path.Join(config.OutputPath, fmt.Sprintf("?s_%02d_aio.wav", channelIndex)),
 	)
 	return metadataCmd.Run()
 }
 
-func convertSubstreamStereoStemIntro(path string, streamIndex int, channelIndex int) error {
-	metadataCmd := exec.Command(VgmstreamCLI, path,
+func convertSubstreamStereoStemIntro(config *CliConfig, streamIndex int, channelIndex int) error {
+	metadataCmd := exec.Command(VgmstreamCLI, config.InputPath,
 		"-s", strconv.Itoa(streamIndex),
 		"-2", strconv.Itoa(channelIndex),
 		"-w",       // Convert in the original sample format
 		"-l", "-1", // Remove looping section
 		"-f", "0", // Remove fade out
-		"-o", fmt.Sprintf("?s_%02d_intro.wav", channelIndex),
+		"-o", path.Join(config.OutputPath, fmt.Sprintf("?s_%02d_intro.wav", channelIndex)),
 	)
 	return metadataCmd.Run()
 }
 
-func convertSubstreamStereoStemLoop(path string, streamIndex int, channelIndex int) error {
-	metadataCmd := exec.Command(VgmstreamCLI, path,
+func convertSubstreamStereoStemLoop(config *CliConfig, streamIndex int, channelIndex int) error {
+	metadataCmd := exec.Command(VgmstreamCLI, config.InputPath,
 		"-s", strconv.Itoa(streamIndex),
 		"-2", strconv.Itoa(channelIndex),
 		"-w", // Convert in the original sample format
-		"-o", fmt.Sprintf("?s_%02d_loop.wav", channelIndex),
+		"-o", path.Join(config.OutputPath, fmt.Sprintf("?s_%02d_loop.wav", channelIndex)),
 		"-k", "-2", // Remove intro section
 		"-l", "1", // One loop
 		"-f", "0", // Remove fade out
@@ -80,27 +83,36 @@ func convertSubstreamStereoStemLoop(path string, streamIndex int, channelIndex i
 	return metadataCmd.Run()
 }
 
-// TODO: Configurable output directory
+type CliConfig struct {
+	AioEnabled   bool
+	IntroEnabled bool
+	LoopEnabled  bool
+
+	InputPath  string
+	OutputPath  string
+}
+
+// TODO: Detect one-shot tracks and export them with a specific file name
 func main() {
-	var (
-		aioEnabled   bool
-		introEnabled bool
-		loopEnabled  bool
-	)
-	flag.BoolVar(&aioEnabled, "aio", false, "Output all-in-one song loop stems")
-	flag.BoolVar(&introEnabled, "intro", true, "Output intro stems")
-	flag.BoolVar(&loopEnabled, "loop", true, "Output loop stems")
+	cliConfig := &CliConfig{}
+
+	flag.BoolVar(&cliConfig.AioEnabled, "aio", false, "Output all-in-one song loop stems")
+	flag.BoolVar(&cliConfig.IntroEnabled, "intro", true, "Output intro stems")
+	flag.BoolVar(&cliConfig.LoopEnabled, "loop", true, "Output loop stems")
+
+	flag.StringVar(&cliConfig.InputPath, "i", "", "Input path for the container file to extract, e.g. 0xeda82cc0.srsa")
+	flag.StringVar(&cliConfig.OutputPath, "o", "", "Output path for the extracted files")
+
 	flag.Parse()
 
-	if flag.NArg() < 1 {
-		fmt.Printf("Usage: %s <path>\n", os.Args[0])
+	if cliConfig.InputPath == "" {
+		fmt.Printf("Usage: %s -i <path>\n", os.Args[0])
 		fmt.Println("Extracts audio streams from the given file, e.g. 0xeda82cc0.srsa")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
-	path := path.Clean(flag.Arg(0))
 
-	containerInfo, err := infoFromStream(path, 0)
+	containerInfo, err := infoFromStream(cliConfig, 0)
 	if err != nil {
 		panic(err)
 	}
@@ -109,7 +121,7 @@ func main() {
 
 	for streamIndex := 1; streamIndex <= containerInfo.StreamInfo.Total; streamIndex++ {
 
-		streamInfo, err := infoFromStream(path, streamIndex)
+		streamInfo, err := infoFromStream(cliConfig, streamIndex)
 		if err != nil {
 			panic(err)
 		}
@@ -119,23 +131,23 @@ func main() {
 		// Convert each substream by of its pair of stereo channels
 		// This assumes everything has at least two channels. Since I'm targeting music, this is acceptable.
 		for channelIndex := 0; channelIndex <= streamInfo.Channels-2; channelIndex += 2 {
-			if aioEnabled {
+			if cliConfig.AioEnabled {
 				fmt.Printf("Exporting AIO stem for channel pair %d\n", channelIndex)
-				err := convertSubstreamStereoStem(path, streamIndex, channelIndex)
+				err := convertSubstreamStereoStemAIO(cliConfig, streamIndex, channelIndex)
 				if err != nil {
 					panic(err)
 				}
 			}
-			if introEnabled {
+			if cliConfig.IntroEnabled {
 				fmt.Printf("Exporting intro stem for channel pair %d\n", channelIndex)
-				err := convertSubstreamStereoStemIntro(path, streamIndex, channelIndex)
+				err := convertSubstreamStereoStemIntro(cliConfig, streamIndex, channelIndex)
 				if err != nil {
 					fmt.Printf("Failed to export intro stem for channel pair %d: %v\n", channelIndex, err)
 				}
 			}
-			if loopEnabled {
+			if cliConfig.LoopEnabled {
 				fmt.Printf("Exporting loop stem for channel pair %d\n", channelIndex)
-				err := convertSubstreamStereoStemLoop(path, streamIndex, channelIndex)
+				err := convertSubstreamStereoStemLoop(cliConfig, streamIndex, channelIndex)
 				if err != nil {
 					fmt.Printf("Failed to export loop stem for channel pair %d: %v\n", channelIndex, err)
 				}

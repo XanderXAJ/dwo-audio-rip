@@ -153,7 +153,10 @@ func extractContainer(cliConfig *CliConfig) {
 					panic(err)
 				}
 			}
-			if cliConfig.IntroEnabled {
+			introAvailable := streamInfo.LoopingInfo != nil && streamInfo.LoopingInfo.Start > 0
+			if cliConfig.IntroEnabled && !introAvailable {
+				fmt.Printf("No intro detected for channel pair %d, skipping\n", channelIndex)
+			} else if cliConfig.IntroEnabled && introAvailable {
 				fmt.Printf("Exporting intro stem for channel pair %d\n", channelIndex)
 				err := convertSubstreamStereoStemIntro(cliConfig, streamIndex, channelIndex)
 				if err != nil {

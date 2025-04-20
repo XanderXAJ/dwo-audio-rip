@@ -17,8 +17,14 @@ const VgmstreamCLI = "vgmstream-cli"
 // e.g. 0xeda82cc0.srsa.
 
 type VgmStreamInfo struct {
-	Channels   int        `json:"channels"`
-	StreamInfo StreamInfo `json:"streamInfo"`
+	Channels    int          `json:"channels"`
+	LoopingInfo *LoopingInfo `json:"loopingInfo"`
+	StreamInfo  *StreamInfo  `json:"streamInfo"`
+}
+
+type LoopingInfo struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 type StreamInfo struct {
@@ -70,12 +76,18 @@ func convertSubstreamStereoStemIntro(config *CliConfig, streamIndex int, channel
 	return metadataCmd.Run()
 }
 
-func convertSubstreamStereoStemLoop(config *CliConfig, streamIndex int, channelIndex int) error {
+func convertSubstreamStereoStemLoop(config *CliConfig, streamInfo *VgmStreamInfo, channelIndex int) error {
+	fileType := "loop"
+	isOneshot := streamInfo.LoopingInfo == nil
+	if isOneshot {
+		fileType = "oneshot"
+	}
+
 	metadataCmd := exec.Command(VgmstreamCLI, config.InputPath,
-		"-s", strconv.Itoa(streamIndex),
+		"-s", strconv.Itoa(streamInfo.StreamInfo.Index),
 		"-2", strconv.Itoa(channelIndex),
 		"-w", // Convert in the original sample format
-		"-o", path.Join(config.OutputPath, fmt.Sprintf("?s_%02d_loop.wav", channelIndex)),
+		"-o", path.Join(config.OutputPath, fmt.Sprintf("?s_%02d_%s.wav", channelIndex, fileType)),
 		"-k", "-2", // Remove intro section
 		"-l", "1", // One loop
 		"-f", "0", // Remove fade out
@@ -89,10 +101,9 @@ type CliConfig struct {
 	LoopEnabled  bool
 
 	InputPath  string
-	OutputPath  string
+	OutputPath string
 }
 
-// TODO: Detect one-shot tracks and export them with a specific file name
 func main() {
 	cliConfig := &CliConfig{}
 
@@ -112,6 +123,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	extractContainer(cliConfig)
+}
+
+func extractContainer(cliConfig *CliConfig) {
 	containerInfo, err := infoFromStream(cliConfig, 0)
 	if err != nil {
 		panic(err)
@@ -147,7 +162,7 @@ func main() {
 			}
 			if cliConfig.LoopEnabled {
 				fmt.Printf("Exporting loop stem for channel pair %d\n", channelIndex)
-				err := convertSubstreamStereoStemLoop(cliConfig, streamIndex, channelIndex)
+				err := convertSubstreamStereoStemLoop(cliConfig, streamInfo, channelIndex)
 				if err != nil {
 					fmt.Printf("Failed to export loop stem for channel pair %d: %v\n", channelIndex, err)
 				}

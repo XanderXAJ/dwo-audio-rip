@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -74,6 +75,20 @@ func (t *TrackFiles) NoOfChannels() int {
 		return len(t.FilesByType["oneshot"]) * 2
 	}
 	return 0
+}
+
+func (t *TrackFiles) SortedFiles() []string {
+	sortedFiles := make([]string, 0, len(t.AllFiles))
+
+	sortChannels := func(i, j int) bool {
+		return t.[i].ChannelNo < files[j].ChannelNo
+	}
+
+	append(sortedFiles, sort.Slice(t.FilesByType["intro"], sortChannels))
+	append(sortedFiles, sort.Slice(t.FilesByType["loop"], sortChannels))
+	append(sortedFiles, sort.Slice(t.FilesByType["oneshot"], sortChannels))
+
+	return sortedFiles
 }
 
 type TrackFile struct {
@@ -185,7 +200,13 @@ func processTrack(track *TrackFiles) error {
 
 func mix12ChannelTrack(track *TrackFiles) error {
 	fmt.Printf("Mixing 12-channel track: %v\n", track.FilesByType)
+	var ffmpegArgs []string
 	// TODO: Get all stems, ensuring they're in the correct (predictable) order
+	for _, file := range track.SortedFiles() {
+		ffmpegArgs = append(ffmpegArgs, "-i", file)
+	}
+	fmt.Printf("FFmpeg args: %v\n", ffmpegArgs)
+
 	// TODO: Create ffmpeg input args for the stems as per test-mix-complete.ps1
 	// TODO: Append into slice to be able to pass to exec.Command()
 	// TODO: Complete the rest of the ffmpeg command

@@ -31,23 +31,9 @@ func main() {
 
 type TrackFiles struct {
 	TrackNo      int
-	AllFiles     []*TrackFile
+	AllFiles     TrackFileList
 	FilesByTrait map[TrackTrait]*TrackFile
-	FilesByType  map[string][]*TrackFile
-}
-
-type TrackTrait struct {
-	ChannelNo int
-	Type      string
-}
-
-func NewTrackFiles(trackNo int) *TrackFiles {
-	return &TrackFiles{
-		TrackNo:      trackNo,
-		AllFiles:     make([]*TrackFile, 0),
-		FilesByTrait: make(map[TrackTrait]*TrackFile),
-		FilesByType:  make(map[string][]*TrackFile),
-	}
+	FilesByType  map[string]TrackFileList
 }
 
 func (t *TrackFiles) String() string {
@@ -77,18 +63,10 @@ func (t *TrackFiles) NoOfChannels() int {
 	return 0
 }
 
-func (t *TrackFiles) SortedFiles() []string {
-	sortedFiles := make([]string, 0, len(t.AllFiles))
+func (t *TrackFiles) SortedFiles() TrackFileList {
+	sort.Sort(t.AllFiles)
 
-	sortChannels := func(i, j int) bool {
-		return t.[i].ChannelNo < files[j].ChannelNo
-	}
-
-	append(sortedFiles, sort.Slice(t.FilesByType["intro"], sortChannels))
-	append(sortedFiles, sort.Slice(t.FilesByType["loop"], sortChannels))
-	append(sortedFiles, sort.Slice(t.FilesByType["oneshot"], sortChannels))
-
-	return sortedFiles
+	return t.AllFiles
 }
 
 type TrackFile struct {
@@ -98,6 +76,35 @@ type TrackFile struct {
 	FilePath  string
 	TrackNo   int
 	Type      string
+}
+
+type TrackFileList []*TrackFile
+
+func (t TrackFileList) Len() int {
+	return len(t)
+}
+
+func (t TrackFileList) Less(i, j int) bool {
+	// Sort first: lower track > lower channel > type (intro > loop > oneshot)
+	return t[i].TrackNo < t[j].TrackNo || t[i].ChannelNo < t[j].ChannelNo || t[i].Type < t[j].Type
+}
+
+func (t TrackFileList) Swap(i, j int) {
+	t[i], t[j] = t[j], t[i]
+}
+
+type TrackTrait struct {
+	ChannelNo int
+	Type      string
+}
+
+func NewTrackFiles(trackNo int) *TrackFiles {
+	return &TrackFiles{
+		TrackNo:      trackNo,
+		AllFiles:     make([]*TrackFile, 0),
+		FilesByTrait: make(map[TrackTrait]*TrackFile),
+		FilesByType:  make(map[string]TrackFileList),
+	}
 }
 
 func (t *TrackFile) String() string {
@@ -200,17 +207,24 @@ func processTrack(track *TrackFiles) error {
 
 func mix12ChannelTrack(track *TrackFiles) error {
 	fmt.Printf("Mixing 12-channel track: %v\n", track.FilesByType)
-	var ffmpegArgs []string
-	// TODO: Get all stems, ensuring they're in the correct (predictable) order
-	for _, file := range track.SortedFiles() {
-		ffmpegArgs = append(ffmpegArgs, "-i", file)
-	}
-	fmt.Printf("FFmpeg args: %v\n", ffmpegArgs)
+	ffmpegArgs := make([]string, 0, 50)
 
-	// TODO: Create ffmpeg input args for the stems as per test-mix-complete.ps1
-	// TODO: Append into slice to be able to pass to exec.Command()
+	ffmpegArgs = append(ffmpegArgs, "ffmpeg", "-y")
+
+	// Create ffmpeg input args for the stems as per test-mix-complete.ps1
+	for _, file := range track.SortedFiles() {
+		// Ignore 00 channels in 12-channel tracks as they are silent
+		if file.ChannelNo == 0 {
+			continue
+		}
+		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
+	}
+
 	// TODO: Complete the rest of the ffmpeg command
 	// TODO: Consider the use of strings.Builder to build the complex filter
+
+	fmt.Printf("ffmpeg command: %v\n", ffmpegArgs)
+
 	return nil
 }
 

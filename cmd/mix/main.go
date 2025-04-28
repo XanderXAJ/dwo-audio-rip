@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"sort"
 	"strconv"
@@ -12,12 +13,14 @@ import (
 
 type CliConfig struct {
 	InputDirectory string
+	OutputDirectory string
 }
 
 func main() {
 	cliConfig := CliConfig{}
 
 	flag.StringVar(&cliConfig.InputDirectory, "i", "", "Path to the directory containing the input files")
+	flag.StringVar(&cliConfig.OutputDirectory, "o", "", "Path to the directory to save the output files")
 	flag.Parse()
 
 	if cliConfig.InputDirectory == "" {
@@ -26,7 +29,7 @@ func main() {
 	}
 
 	// Process the input directory
-	processAll(cliConfig)
+	processAll(&cliConfig)
 }
 
 type TrackFiles struct {
@@ -141,7 +144,7 @@ func trackFileFromFileName(filePath string) (*TrackFile, error) {
 	}, nil
 }
 
-func processAll(cliConfig CliConfig) error {
+func processAll(cliConfig *CliConfig) error {
 	fmt.Println("Processing input directory:", cliConfig.InputDirectory)
 
 	/*
@@ -187,29 +190,29 @@ func processAll(cliConfig CliConfig) error {
 
 	// Process every track
 	for _, trackFile := range allTracks {
-		processTrack(trackFile)
+		processTrack(cliConfig, trackFile)
 	}
 
 	return nil
 }
 
-func processTrack(track *TrackFiles) error {
+func processTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	// Process the track based on the number of subchannels and file types available
 	fmt.Printf("Processing track %d with %d channels: %v\n", track.TrackNo, track.NoOfChannels(), track.FilesByType)
 
 	if track.NoOfChannels() == 12 {
-		return mix12ChannelTrack(track)
+		return mix12ChannelTrack(cliConfig, track)
 	} else if track.NoOfChannels() == 2 {
 		return mixStereoTrack(track)
 	}
 	return nil
 }
 
-func mix12ChannelTrack(track *TrackFiles) error {
+func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	fmt.Printf("Mixing 12-channel track: %v\n", track.FilesByType)
 	ffmpegArgs := make([]string, 0, 50)
 
-	ffmpegArgs = append(ffmpegArgs, "ffmpeg", "-y")
+	ffmpegArgs = append(ffmpegArgs, "-y")
 
 	// Create ffmpeg input args for the stems as per test-mix-complete.ps1
 	for _, file := range track.SortedFiles() {
@@ -220,12 +223,23 @@ func mix12ChannelTrack(track *TrackFiles) error {
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
 
-	// TODO: Complete the rest of the ffmpeg command
-	// TODO: Consider the use of strings.Builder to build the complex filter
+	// Add filter that mixes the tracks together
+	// TODO: Consider the use of strings.Builder to build the complex filter for ease of maintenance
+	ffmpegArgs = append(ffmpegArgs, "-filter_complex", fmt.Sprintf(`
+		[0][1][2][3][4]amix=inputs=5[intro];
+		[5][6][7][8][9]amix=inputs=5[loop];
+		[loop]aloop=loop=%d:size=2e9[loops];
+		[intro][loops]concat=v=0:a=1;
+		`, 2))
+
+	// Add output file name
+	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
+	ffmpegArgs = append(ffmpegArgs, outputPath)
 
 	fmt.Printf("ffmpeg command: %v\n", ffmpegArgs)
 
-	return nil
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
+	return cmd.Run()
 }
 
 func mixStereoTrack(track *TrackFiles) error {

@@ -6,15 +6,18 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type CliConfig struct {
 	InputDirectory string
 	OutputDirectory string
 	Loops int
+	Workers int
 }
 
 func main() {
@@ -27,6 +30,8 @@ func main() {
 		outputUsage = "Path to the directory to save the output files"
 		loopsDefault = 2
 		loopsUsage = "Number of loops for the intro"
+		workersDefault = -1
+		workersUsage = "Number of workers to use for processing"
 	)
 
 	flag.StringVar(&cliConfig.InputDirectory, "i", inputDefault, inputUsage)
@@ -35,9 +40,11 @@ func main() {
 	flag.StringVar(&cliConfig.OutputDirectory, "output", outputDefault, outputUsage)
 	flag.IntVar(&cliConfig.Loops, "l", loopsDefault, loopsUsage)
 	flag.IntVar(&cliConfig.Loops, "loops", loopsDefault, loopsUsage)
+	flag.IntVar(&cliConfig.Workers, "w", -1, workersUsage)
+	flag.IntVar(&cliConfig.Workers, "workers", -1, workersUsage)
 	flag.Parse()
 
-	if cliConfig.InputDirectory == "" {
+	if cliConfig.InputDirectory == inputDefault {
 		flag.Usage()
 		return
 	}
@@ -202,12 +209,38 @@ func processAll(cliConfig *CliConfig) error {
 		allTracks[trackFile.TrackNo].AddFile(*trackFile)
 	}
 
-	// Process every track
-	for _, trackFile := range allTracks {
-		processTrack(cliConfig, trackFile)
+	// Create workers for processing tracks
+	numWorkers := cliConfig.Workers
+	if numWorkers < 0 {
+		numWorkers = runtime.NumCPU()
+	}
+	trackChan := make(chan *TrackFiles, len(allTracks))
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go worker(cliConfig, trackChan, &wg)
 	}
 
+	// Enqueue processing for every track
+	for _, trackFile := range allTracks {
+		trackChan <- trackFile
+	}
+	close(trackChan)
+
+	// Wait for all workers to finish
+	wg.Wait()
+
 	return nil
+}
+
+func worker(cliConfig *CliConfig, trackChan chan *TrackFiles, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for track := range trackChan {
+		err := processTrack(cliConfig, track)
+		if err != nil {
+			fmt.Printf("Error processing track %d: %v\n", track.TrackNo, err)
+		}
+	}
 }
 
 func processTrack(cliConfig *CliConfig, track *TrackFiles) error {

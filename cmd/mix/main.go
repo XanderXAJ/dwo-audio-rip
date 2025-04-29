@@ -14,13 +14,27 @@ import (
 type CliConfig struct {
 	InputDirectory string
 	OutputDirectory string
+	Loops int
 }
 
 func main() {
 	cliConfig := CliConfig{}
 
-	flag.StringVar(&cliConfig.InputDirectory, "i", "", "Path to the directory containing the input files")
-	flag.StringVar(&cliConfig.OutputDirectory, "o", "", "Path to the directory to save the output files")
+	const (
+		inputDefault = ""
+		inputUsage = "Path to the directory containing the input files"
+		outputDefault = ""
+		outputUsage = "Path to the directory to save the output files"
+		loopsDefault = 2
+		loopsUsage = "Number of loops for the intro"
+	)
+
+	flag.StringVar(&cliConfig.InputDirectory, "i", inputDefault, inputUsage)
+	flag.StringVar(&cliConfig.InputDirectory, "input", inputDefault, inputUsage)
+	flag.StringVar(&cliConfig.OutputDirectory, "o", outputDefault, outputUsage)
+	flag.StringVar(&cliConfig.OutputDirectory, "output", outputDefault, outputUsage)
+	flag.IntVar(&cliConfig.Loops, "l", loopsDefault, loopsUsage)
+	flag.IntVar(&cliConfig.Loops, "loops", loopsDefault, loopsUsage)
 	flag.Parse()
 
 	if cliConfig.InputDirectory == "" {
@@ -230,7 +244,7 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 		[5][6][7][8][9]amix=inputs=5[loop];
 		[loop]aloop=loop=%d:size=2e9[loops];
 		[intro][loops]concat=v=0:a=1;
-		`, 2))
+		`, cliConfig.Loops))
 
 	// Add output file name
 	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))

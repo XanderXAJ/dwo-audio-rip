@@ -275,11 +275,12 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
 
-	// Add filter that mixes the tracks together
+	// Add filter that mixes the tracks together.
+	// Stems are pre-normalised, so no need to normalise again here.
 	// TODO: Consider the use of strings.Builder to build the complex filter for ease of maintenance
 	ffmpegArgs = append(ffmpegArgs, "-filter_complex", fmt.Sprintf(`
-		[0][1][2][3][4]amix=inputs=5[intro];
-		[5][6][7][8][9]amix=inputs=5[loop];
+		[0][1][2][3][4]amix=inputs=5:normalize=0[intro];
+		[5][6][7][8][9]amix=inputs=5:normalize=0[loop];
 		[loop]aloop=loop=%d:size=2e9[loops];
 		[intro][loops]concat=v=0:a=1;
 		`, cliConfig.Loops))

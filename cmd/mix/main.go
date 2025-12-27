@@ -250,7 +250,7 @@ func processTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	if track.NoOfChannels() == 12 {
 		return mix12ChannelTrack(cliConfig, track)
 	} else if track.NoOfChannels() == 2 {
-		return mixStereoTrack(track)
+		return mixStereoTrack(cliConfig, track)
 	}
 	return nil
 }
@@ -292,10 +292,61 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	fmt.Printf("ffmpeg command: %v\n", ffmpegArgs)
 
 	cmd := exec.Command("ffmpeg", ffmpegArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func mixStereoTrack(track *TrackFiles) error {
+func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	fmt.Printf("Mixing stereo track: %v\n", track.FilesByType)
-	return nil
+
+	// Ensure output directory exists
+	if err := os.MkdirAll(cliConfig.OutputDirectory, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	ffmpegArgs := make([]string, 0, 20)
+	ffmpegArgs = append(ffmpegArgs, "-y")
+
+	_, hasIntro := track.FilesByType["intro"]
+	_, hasOneshot := track.FilesByType["oneshot"]
+
+	// We either have a oneshot track, or a loop with an optional intro.
+	// Loops and oneshots are effectively the same, except oneshots don't loop.
+	numLoops := cliConfig.Loops
+	if hasOneshot {
+		numLoops = 0
+	}
+
+	// Create ffmpeg input args for the stems
+	for _, file := range track.SortedFiles() {
+		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
+	}
+
+	// Add filter that mixes the tracks together.
+	// Stems are pre-normalised, so no need to normalise again here.
+
+	if hasIntro {
+		// Use filter that handles intro
+		ffmpegArgs = append(ffmpegArgs, "-filter_complex", fmt.Sprintf(`
+			[1]aloop=loop=%d:size=2e9[loops];
+			[0][loops]concat=v=0:a=1;
+			`, numLoops))
+	} else {
+		// Use filter without intro
+		ffmpegArgs = append(ffmpegArgs, "-filter_complex", fmt.Sprintf(`
+			[0]aloop=loop=%d:size=2e9;
+			`, numLoops))
+	}
+
+	// Add output file name
+	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
+	ffmpegArgs = append(ffmpegArgs, outputPath)
+
+	fmt.Printf("ffmpeg command: %v\n", ffmpegArgs)
+
+	cmd := exec.Command("ffmpeg", ffmpegArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

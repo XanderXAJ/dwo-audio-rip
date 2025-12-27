@@ -257,8 +257,13 @@ func processTrack(cliConfig *CliConfig, track *TrackFiles) error {
 
 func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	fmt.Printf("Mixing 12-channel track: %v\n", track.FilesByType)
-	ffmpegArgs := make([]string, 0, 50)
 
+	// Ensure output directory exists
+	if err := os.MkdirAll(cliConfig.OutputDirectory, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	ffmpegArgs := make([]string, 0, 50)
 	ffmpegArgs = append(ffmpegArgs, "-y")
 
 	// Create ffmpeg input args for the stems as per test-mix-complete.ps1

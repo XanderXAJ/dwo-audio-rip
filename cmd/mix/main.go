@@ -14,24 +14,24 @@ import (
 )
 
 type CliConfig struct {
-	InputDirectory string
+	InputDirectory  string
 	OutputDirectory string
-	Loops int
-	Workers int
+	Loops           int
+	Workers         int
 }
 
 func main() {
 	cliConfig := CliConfig{}
 
 	const (
-		inputDefault = ""
-		inputUsage = "Path to the directory containing the input files"
-		outputDefault = ""
-		outputUsage = "Path to the directory to save the output files"
-		loopsDefault = 2
-		loopsUsage = "Number of loops for the intro"
+		inputDefault   = ""
+		inputUsage     = "Path to the directory containing the input files"
+		outputDefault  = ""
+		outputUsage    = "Path to the directory to save the output files"
+		loopsDefault   = 2
+		loopsUsage     = "Number of loops for the intro"
 		workersDefault = -1
-		workersUsage = "Number of workers to use for processing"
+		workersUsage   = "Number of workers to use for processing"
 	)
 
 	flag.StringVar(&cliConfig.InputDirectory, "i", inputDefault, inputUsage)

@@ -272,18 +272,22 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 		if file.ChannelNo == 0 {
 			continue
 		}
+		// We either have a oneshot track, or a loop with an optional intro.
+		// Loops and oneshots are effectively the same, except oneshots don't loop.
+		if file.Type == "loop" {
+			ffmpegArgs = append(ffmpegArgs, "-stream_loop", strconv.Itoa(cliConfig.Loops))
+		}
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
 
 	// Add filter that mixes the tracks together.
 	// Stems are pre-normalised, so no need to normalise again here.
 	// TODO: Consider the use of strings.Builder to build the complex filter for ease of maintenance
-	ffmpegArgs = append(ffmpegArgs, "-filter_complex", fmt.Sprintf(`
+	ffmpegArgs = append(ffmpegArgs, "-filter_complex", `
 		[0][1][2][3][4]amix=inputs=5:normalize=0[intro];
 		[5][6][7][8][9]amix=inputs=5:normalize=0[loop];
-		[loop]aloop=loop=%d:size=2e9[loops];
-		[intro][loops]concat=v=0:a=1;
-		`, cliConfig.Loops))
+		[intro][loop]concat=v=0:a=1;
+		`)
 
 	// Add output file name
 	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
@@ -309,17 +313,14 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	ffmpegArgs = append(ffmpegArgs, "-y")
 
 	_, hasIntro := track.FilesByType["intro"]
-	_, hasOneshot := track.FilesByType["oneshot"]
-
-	// We either have a oneshot track, or a loop with an optional intro.
-	// Loops and oneshots are effectively the same, except oneshots don't loop.
-	numLoops := cliConfig.Loops
-	if hasOneshot {
-		numLoops = 0
-	}
 
 	// Create ffmpeg input args for the stems
 	for _, file := range track.SortedFiles() {
+		// We either have a oneshot track, or a loop with an optional intro.
+		// Loops and oneshots are effectively the same, except oneshots don't loop.
+		if file.Type == "loop" {
+			ffmpegArgs = append(ffmpegArgs, "-stream_loop", strconv.Itoa(cliConfig.Loops))
+		}
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
 
@@ -327,16 +328,10 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	// Stems are pre-normalised, so no need to normalise again here.
 
 	if hasIntro {
-		// Use filter that handles intro
-		ffmpegArgs = append(ffmpegArgs, "-filter_complex", fmt.Sprintf(`
-			[1]aloop=loop=%d:size=2e9[loops];
-			[0][loops]concat=v=0:a=1;
-			`, numLoops))
-	} else {
-		// Use filter without intro
-		ffmpegArgs = append(ffmpegArgs, "-filter_complex", fmt.Sprintf(`
-			[0]aloop=loop=%d:size=2e9;
-			`, numLoops))
+		// Use filter that concats intro and loop
+		ffmpegArgs = append(ffmpegArgs, "-filter_complex", `
+			[0][1]concat=v=0:a=1;
+			`)
 	}
 
 	// Add output file name

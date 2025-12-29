@@ -1,26 +1,38 @@
 package main
 
 import (
-	"context"
-	"dwo-audio-rip/internal/probe"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 )
 
 type CliConfig struct {
+	Duration        float64
+	FadeDuration    float64
 	InputDirectory  string
 	OutputDirectory string
 	Loops           int
 	Workers         int
 	Verbose         bool
+}
+
+func (c *CliConfig) Validate() error {
+	if c.InputDirectory == "" {
+		return fmt.Errorf("input directory is required")
+	}
+
+	// Require either Duration or Loops to be set
+	if c.Duration <= 0 && c.Loops <= 0 {
+		return fmt.Errorf("either -duration or -loops must be set to positive numbers")
+	}
+
+	return nil
 }
 
 func main() {
@@ -39,6 +51,8 @@ func main() {
 		workersUsage   = "Number of workers to use for processing"
 	)
 
+	flag.Float64Var(&cliConfig.Duration, "duration", -1, "Minimum duration (in seconds) for mixed tracks. Takes precedence over -loops.")
+	flag.Float64Var(&cliConfig.FadeDuration, "fade", 15.0, "Fade out duration at the end of tracks")
 	flag.StringVar(&cliConfig.InputDirectory, "i", inputDefault, inputUsage)
 	flag.StringVar(&cliConfig.InputDirectory, "input", inputDefault, inputUsage)
 	flag.StringVar(&cliConfig.OutputDirectory, "o", outputDefault, outputUsage)
@@ -51,132 +65,14 @@ func main() {
 	flag.BoolVar(&cliConfig.Verbose, "verbose", verboseDefault, verboseUsage)
 	flag.Parse()
 
-	if cliConfig.InputDirectory == inputDefault {
+	if err := cliConfig.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
 		flag.Usage()
 		return
 	}
 
 	// Process the input directory
 	processAll(&cliConfig)
-}
-
-type TrackFiles struct {
-	TrackNo      int
-	AllFiles     TrackFileList
-	FilesByTrait map[TrackTrait]*TrackFile
-	FilesByType  map[string]TrackFileList
-}
-
-func (t *TrackFiles) String() string {
-	return fmt.Sprintf("Track %d: %v", t.TrackNo, t.FilesByType)
-}
-
-func (t *TrackFiles) AddFile(file TrackFile) {
-	t.AllFiles = append(t.AllFiles, &file)
-
-	trait := TrackTrait{
-		ChannelNo: file.ChannelNo,
-		Type:      file.Type,
-	}
-	t.FilesByTrait[trait] = &file
-
-	t.FilesByType[file.Type] = append(t.FilesByType[file.Type], &file)
-}
-
-func (t *TrackFiles) NoOfChannels() int {
-	// Return the channel count of the first type that exists: loop, oneshot
-	// We assume every file is stereo
-	if len(t.FilesByType["loop"]) > 0 {
-		return len(t.FilesByType["loop"]) * 2
-	} else if len(t.FilesByType["oneshot"]) > 0 {
-		return len(t.FilesByType["oneshot"]) * 2
-	}
-	return 0
-}
-
-func (t *TrackFiles) SortedFiles() TrackFileList {
-	sort.Sort(t.AllFiles)
-
-	return t.AllFiles
-}
-
-type TrackFile struct {
-	ChannelNo       int
-	DurationSeconds float64
-	Extension       string
-	FileName        string
-	FilePath        string
-	TrackNo         int
-	Type            string
-}
-
-type TrackFileList []*TrackFile
-
-func (t TrackFileList) Len() int {
-	return len(t)
-}
-
-func (t TrackFileList) Less(i, j int) bool {
-	// Sort first: lower track > lower channel > type (intro > loop > oneshot)
-	return t[i].TrackNo < t[j].TrackNo || t[i].ChannelNo < t[j].ChannelNo || t[i].Type < t[j].Type
-}
-
-func (t TrackFileList) Swap(i, j int) {
-	t[i], t[j] = t[j], t[i]
-}
-
-type TrackTrait struct {
-	ChannelNo int
-	Type      string
-}
-
-func NewTrackFiles(trackNo int) *TrackFiles {
-	return &TrackFiles{
-		TrackNo:      trackNo,
-		AllFiles:     make([]*TrackFile, 0),
-		FilesByTrait: make(map[TrackTrait]*TrackFile),
-		FilesByType:  make(map[string]TrackFileList),
-	}
-}
-
-func (t *TrackFile) String() string {
-	return t.FileName
-}
-
-func trackFileFromFileName(filePath string) (*TrackFile, error) {
-	fileName := path.Base(filePath)
-	parts := strings.Split(fileName, "_")
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid file name format: %s", fileName)
-	}
-
-	trackNo, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return nil, fmt.Errorf("error converting track number: %w", err)
-	}
-	channelNo, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("error converting channel number: %w", err)
-	}
-
-	parts = strings.Split(parts[2], ".")
-	fileType := parts[0]
-	extension := parts[1]
-
-	durationSeconds, err := probe.DurationSeconds(context.Background(), filePath)
-	if err != nil {
-		return nil, fmt.Errorf("error probing duration: %w", err)
-	}
-
-	return &TrackFile{
-		ChannelNo:       channelNo,
-		DurationSeconds: durationSeconds,
-		Extension:       extension,
-		FileName:        fileName,
-		FilePath:        filePath,
-		TrackNo:         trackNo,
-		Type:            fileType,
-	}, nil
 }
 
 func processAll(cliConfig *CliConfig) error {
@@ -344,20 +240,41 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 		// We either have a oneshot track, or a loop with an optional intro.
 		// Loops and oneshots are effectively the same, except oneshots don't loop.
 		if file.Type == "loop" {
-			ffmpegArgs = append(ffmpegArgs, "-stream_loop", strconv.Itoa(cliConfig.Loops))
+			ffmpegArgs = append(ffmpegArgs, "-stream_loop", "-1")
 		}
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
 
-	// Add filter that mixes the tracks together.
-	// Stems are pre-normalised, so no need to normalise again here.
-
+	// Assemble filter_complex
+	filter := strings.Builder{}
 	if hasIntro {
-		// Use filter that concats intro and loop
-		ffmpegArgs = append(ffmpegArgs, "-filter_complex", `
-			[0][1]concat=v=0:a=1;
-			`)
+		filter.WriteString("[0]anull[intro];")
+		filter.WriteString("[1]anull[loop];")
+	} else {
+		filter.WriteString("[0]anull[loop];")
 	}
+
+	if !track.HasOneshot() {
+		loopPlan, err := planLoops(cliConfig, *track)
+		if err != nil {
+			return fmt.Errorf("failed to plan loops for track %d: %w", track.TrackNo, err)
+		}
+		filter.WriteString(generateLoopFadeFilters(loopPlan))
+
+		if hasIntro {
+			filter.WriteString("[intro][body][fade]concat=n=3:v=0:a=1;")
+		} else {
+			filter.WriteString("[body][fade]concat=v=0:a=1;")
+		}
+	} else {
+		if hasIntro {
+			filter.WriteString("[intro][loop]concat=v=0:a=1;")
+		} else {
+			filter.WriteString("[loop]anull;") // Sink hanging loop label to output to avoid error
+		}
+	}
+
+	ffmpegArgs = append(ffmpegArgs, "-filter_complex", filter.String())
 
 	// Add output file name
 	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
@@ -369,4 +286,12 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func generateLoopFadeFilters(loopPlan *LoopPlan) string {
+	return fmt.Sprintf(`
+		[loop]asplit=2[w0][w1];
+		[w0]atrim=0:%.9f,asetpts=N/SR/TB[body];
+		[w1]atrim=%.9f:%.9f,asetpts=N/SR/TB,afade=t=out:st=0:d=%.9f[fade];
+		`, loopPlan.LoopEnd, loopPlan.LoopEnd, loopPlan.FadeEnd, loopPlan.FadeEnd-loopPlan.LoopEnd)
 }

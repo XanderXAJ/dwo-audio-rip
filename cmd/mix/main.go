@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"dwo-audio-rip/internal/probe"
 	"flag"
 	"fmt"
 	"os"
@@ -18,6 +20,7 @@ type CliConfig struct {
 	OutputDirectory string
 	Loops           int
 	Workers         int
+	Verbose         bool
 }
 
 func main() {
@@ -30,6 +33,8 @@ func main() {
 		outputUsage    = "Path to the directory to save the output files"
 		loopsDefault   = 2
 		loopsUsage     = "Number of loops for the intro"
+		verboseDefault = false
+		verboseUsage   = "Enable verbose logging"
 		workersDefault = -1
 		workersUsage   = "Number of workers to use for processing"
 	)
@@ -42,6 +47,8 @@ func main() {
 	flag.IntVar(&cliConfig.Loops, "loops", loopsDefault, loopsUsage)
 	flag.IntVar(&cliConfig.Workers, "w", -1, workersUsage)
 	flag.IntVar(&cliConfig.Workers, "workers", -1, workersUsage)
+	flag.BoolVar(&cliConfig.Verbose, "v", verboseDefault, verboseUsage)
+	flag.BoolVar(&cliConfig.Verbose, "verbose", verboseDefault, verboseUsage)
 	flag.Parse()
 
 	if cliConfig.InputDirectory == inputDefault {
@@ -94,12 +101,13 @@ func (t *TrackFiles) SortedFiles() TrackFileList {
 }
 
 type TrackFile struct {
-	ChannelNo int
-	Extension string
-	FileName  string
-	FilePath  string
-	TrackNo   int
-	Type      string
+	ChannelNo       int
+	DurationSeconds float64
+	Extension       string
+	FileName        string
+	FilePath        string
+	TrackNo         int
+	Type            string
 }
 
 type TrackFileList []*TrackFile
@@ -155,13 +163,19 @@ func trackFileFromFileName(filePath string) (*TrackFile, error) {
 	fileType := parts[0]
 	extension := parts[1]
 
+	durationSeconds, err := probe.DurationSeconds(context.Background(), filePath)
+	if err != nil {
+		return nil, fmt.Errorf("error probing duration: %w", err)
+	}
+
 	return &TrackFile{
-		ChannelNo: channelNo,
-		Extension: extension,
-		FileName:  fileName,
-		FilePath:  filePath,
-		TrackNo:   trackNo,
-		Type:      fileType,
+		ChannelNo:       channelNo,
+		DurationSeconds: durationSeconds,
+		Extension:       extension,
+		FileName:        fileName,
+		FilePath:        filePath,
+		TrackNo:         trackNo,
+		Type:            fileType,
 	}, nil
 }
 
@@ -207,6 +221,17 @@ func processAll(cliConfig *CliConfig) error {
 			allTracks[trackFile.TrackNo] = NewTrackFiles(trackFile.TrackNo)
 		}
 		allTracks[trackFile.TrackNo].AddFile(*trackFile)
+	}
+
+	// Verbosely print all processed TrackFiles
+	if cliConfig.Verbose {
+		fmt.Println("All processed TrackFiles:")
+		for _, track := range allTracks {
+			fmt.Printf("Track %d:\n", track.TrackNo)
+			for _, file := range track.SortedFiles() {
+				fmt.Printf("  %+v\n", *file)
+			}
+		}
 	}
 
 	// Create workers for processing tracks

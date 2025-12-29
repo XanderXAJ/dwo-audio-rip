@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -196,19 +195,27 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 		// We either have a oneshot track, or a loop with an optional intro.
 		// Loops and oneshots are effectively the same, except oneshots don't loop.
 		if file.Type == "loop" {
-			ffmpegArgs = append(ffmpegArgs, "-stream_loop", strconv.Itoa(cliConfig.Loops))
+			ffmpegArgs = append(ffmpegArgs, "-stream_loop", "-1")
 		}
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
 
+	//// Assemble -filter_complex
 	// Add filter that mixes the tracks together.
 	// Stems are pre-normalised, so no need to normalise again here.
-	// TODO: Consider the use of strings.Builder to build the complex filter for ease of maintenance
-	ffmpegArgs = append(ffmpegArgs, "-filter_complex", `
-		[0][1][2][3][4]amix=inputs=5:normalize=0[intro];
-		[5][6][7][8][9]amix=inputs=5:normalize=0[loop];
-		[intro][loop]concat=v=0:a=1;
-		`)
+	filter := strings.Builder{}
+
+	// Set up inputs
+	filter.WriteString("[0][1][2][3][4]amix=inputs=5:normalize=0[intro];")
+	filter.WriteString("[5][6][7][8][9]amix=inputs=5:normalize=0[loop];")
+
+	trackFilter, err := generateTrackFilter(track, cliConfig)
+	if err != nil {
+		return err
+	}
+	filter.WriteString(trackFilter)
+
+	ffmpegArgs = append(ffmpegArgs, "-filter_complex", filter.String())
 
 	// Add output file name
 	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
@@ -245,7 +252,8 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
 
-	// Assemble filter_complex
+	//// Assemble -filter_complex
+	// Set up inputs
 	filter := strings.Builder{}
 	if hasIntro {
 		filter.WriteString("[0]anull[intro];")
@@ -254,25 +262,11 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 		filter.WriteString("[0]anull[loop];")
 	}
 
-	if !track.HasOneshot() {
-		loopPlan, err := planLoops(cliConfig, *track)
-		if err != nil {
-			return fmt.Errorf("failed to plan loops for track %d: %w", track.TrackNo, err)
-		}
-		filter.WriteString(generateLoopFadeFilters(loopPlan))
-
-		if hasIntro {
-			filter.WriteString("[intro][body][fade]concat=n=3:v=0:a=1;")
-		} else {
-			filter.WriteString("[body][fade]concat=v=0:a=1;")
-		}
-	} else {
-		if hasIntro {
-			filter.WriteString("[intro][loop]concat=v=0:a=1;")
-		} else {
-			filter.WriteString("[loop]anull;") // Sink hanging loop label to output to avoid error
-		}
+	trackFilter, err := generateTrackFilter(track, cliConfig)
+	if err != nil {
+		return err
 	}
+	filter.WriteString(trackFilter)
 
 	ffmpegArgs = append(ffmpegArgs, "-filter_complex", filter.String())
 
@@ -286,6 +280,33 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// Assumes that [loop] and [intro] (if applicable) labels are defined.
+func generateTrackFilter(track *TrackFiles, cliConfig *CliConfig) (string, error) {
+	filter := strings.Builder{}
+
+	if !track.HasOneshot() {
+		loopPlan, err := planLoops(cliConfig, *track)
+		if err != nil {
+			return "", fmt.Errorf("failed to plan loops for track %d: %w", track.TrackNo, err)
+		}
+		filter.WriteString(generateLoopFadeFilters(loopPlan))
+
+		if track.HasIntro() {
+			filter.WriteString("[intro][body][fade]concat=n=3:v=0:a=1;")
+		} else {
+			filter.WriteString("[body][fade]concat=v=0:a=1;")
+		}
+	} else {
+		if track.HasIntro() {
+			filter.WriteString("[intro][loop]concat=v=0:a=1;")
+		} else {
+			filter.WriteString("[loop]anull;") // Sink hanging loop label to output to avoid error
+		}
+	}
+
+	return filter.String(), nil
 }
 
 func generateLoopFadeFilters(loopPlan *LoopPlan) string {

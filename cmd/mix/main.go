@@ -11,12 +11,50 @@ import (
 	"sync"
 )
 
+// OutputMode represents the output mode for mixing
+type OutputMode int
+
+const (
+	ModeFull OutputMode = iota
+	ModeIntroOnly
+	ModeLoopOnly
+)
+
+// String returns the string representation of the OutputMode
+func (m OutputMode) String() string {
+	switch m {
+	case ModeFull:
+		return "full"
+	case ModeIntroOnly:
+		return "intro-only"
+	case ModeLoopOnly:
+		return "loop-only"
+	default:
+		return "unknown"
+	}
+}
+
+// ParseOutputMode converts a string to an OutputMode
+func ParseOutputMode(s string) (OutputMode, error) {
+	switch s {
+	case "full":
+		return ModeFull, nil
+	case "intro-only":
+		return ModeIntroOnly, nil
+	case "loop-only":
+		return ModeLoopOnly, nil
+	default:
+		return ModeFull, fmt.Errorf("invalid mode: %s", s)
+	}
+}
+
 type CliConfig struct {
 	Duration        float64
 	FadeDuration    float64
 	InputDirectory  string
 	OutputDirectory string
 	Loops           int
+	Mode            OutputMode
 	Workers         int
 	Verbose         bool
 }
@@ -26,9 +64,13 @@ func (c *CliConfig) Validate() error {
 		return fmt.Errorf("input directory is required")
 	}
 
-	// Require either Duration or Loops to be set
-	if c.Duration <= 0 && c.Loops <= 0 {
-		return fmt.Errorf("either -duration or -loops must be set to positive numbers")
+	// For intro-only and loop-only, duration/loops are not required
+	switch c.Mode {
+	case ModeFull:
+		// Require either Duration or Loops to be set for full mode
+		if c.Duration <= 0 && c.Loops <= 0 {
+			return fmt.Errorf("either -duration or -loops must be set to positive numbers")
+		}
 	}
 
 	return nil
@@ -50,7 +92,7 @@ func main() {
 		workersUsage   = "Number of workers to use for processing"
 	)
 
-	flag.Float64Var(&cliConfig.Duration, "duration", -1, "Minimum duration (in seconds) for mixed tracks. Takes precedence over -loops.")
+	flag.Float64Var(&cliConfig.Duration, "duration", -1, "Minimum duration (in seconds) for mixed tracks. Takes precedence over -loops. Only used in 'full' mode.")
 	flag.Float64Var(&cliConfig.FadeDuration, "fade", 15.0, "Fade out duration at the end of tracks")
 	flag.StringVar(&cliConfig.InputDirectory, "i", inputDefault, inputUsage)
 	flag.StringVar(&cliConfig.InputDirectory, "input", inputDefault, inputUsage)
@@ -58,11 +100,21 @@ func main() {
 	flag.StringVar(&cliConfig.OutputDirectory, "output", outputDefault, outputUsage)
 	flag.IntVar(&cliConfig.Loops, "l", loopsDefault, loopsUsage)
 	flag.IntVar(&cliConfig.Loops, "loops", loopsDefault, loopsUsage)
+	mode := flag.String("mode", "full", "Output mode: 'full' (intro+loops), 'intro-only', or 'loop-only'")
 	flag.IntVar(&cliConfig.Workers, "w", -1, workersUsage)
 	flag.IntVar(&cliConfig.Workers, "workers", -1, workersUsage)
 	flag.BoolVar(&cliConfig.Verbose, "v", verboseDefault, verboseUsage)
 	flag.BoolVar(&cliConfig.Verbose, "verbose", verboseDefault, verboseUsage)
 	flag.Parse()
+
+	// Parse the mode string into the enum
+	var err error
+	cliConfig.Mode, err = ParseOutputMode(*mode)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
+		flag.Usage()
+		return
+	}
 
 	if err := cliConfig.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
@@ -187,15 +239,36 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	ffmpegArgs = append(ffmpegArgs, "-y")
 
 	// Create ffmpeg input args for the stems as per test-mix-complete.ps1
+	// Filter files based on mode
 	for _, file := range track.SortedFiles() {
 		// Ignore 00 channels in 12-channel tracks as they are silent
 		if file.ChannelNo == 0 {
 			continue
 		}
+
+		// Filter by mode
+		switch cliConfig.Mode {
+		case ModeIntroOnly:
+			if file.Type != "intro" {
+				continue
+			}
+		case ModeLoopOnly:
+			if file.Type != "loop" && file.Type != "oneshot" {
+				continue
+			}
+		case ModeFull:
+			// Include all files for full mode
+		}
+
 		// We either have a oneshot track, or a loop with an optional intro.
 		// Loops and oneshots are effectively the same, except oneshots don't loop.
-		if file.Type == "loop" {
-			ffmpegArgs = append(ffmpegArgs, "-stream_loop", "-1")
+		switch cliConfig.Mode {
+		case ModeFull:
+			if file.Type == "loop" {
+				ffmpegArgs = append(ffmpegArgs, "-stream_loop", "-1")
+			}
+		case ModeIntroOnly, ModeLoopOnly:
+			// No looping in these modes
 		}
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
@@ -205,9 +278,19 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	// Stems are pre-normalised, so no need to normalise again here.
 	filter := strings.Builder{}
 
-	// Set up inputs
-	filter.WriteString("[0][1][2][3][4]amix=inputs=5:normalize=0[intro];")
-	filter.WriteString("[5][6][7][8][9]amix=inputs=5:normalize=0[loop];")
+	// Set up inputs based on mode
+	switch cliConfig.Mode {
+	case ModeIntroOnly:
+		// Only intro files: [0][1][2][3][4]amix=inputs=5:normalize=0[intro];
+		filter.WriteString("[0][1][2][3][4]amix=inputs=5:normalize=0[intro];")
+	case ModeLoopOnly:
+		// Only loop files: [0][1][2][3][4]amix=inputs=5:normalize=0[loop];
+		filter.WriteString("[0][1][2][3][4]amix=inputs=5:normalize=0[loop];")
+	case ModeFull:
+		// Full mode: both intro and loop
+		filter.WriteString("[0][1][2][3][4]amix=inputs=5:normalize=0[intro];")
+		filter.WriteString("[5][6][7][8][9]amix=inputs=5:normalize=0[loop];")
+	}
 
 	trackFilter, err := generateTrackFilter(track, cliConfig)
 	if err != nil {
@@ -217,9 +300,18 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 
 	ffmpegArgs = append(ffmpegArgs, "-filter_complex", filter.String())
 
-	// Add output file name
+	// Add output file name with mode suffix
 	ffmpegArgs = append(ffmpegArgs, "-compression_level", "12")
-	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
+	outputSuffix := ""
+	switch cliConfig.Mode {
+	case ModeIntroOnly:
+		outputSuffix = "_intro"
+	case ModeLoopOnly:
+		outputSuffix = "_loop"
+	case ModeFull:
+		// No suffix for full mode
+	}
+	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix%s.flac", track.TrackNo, outputSuffix))
 	ffmpegArgs = append(ffmpegArgs, outputPath)
 
 	fmt.Printf("ffmpeg command: %v\n", ffmpegArgs)
@@ -244,11 +336,31 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	_, hasIntro := track.FilesByType["intro"]
 
 	// Create ffmpeg input args for the stems
+	// Filter files based on mode
 	for _, file := range track.SortedFiles() {
+		// Filter by mode
+		switch cliConfig.Mode {
+		case ModeIntroOnly:
+			if file.Type != "intro" {
+				continue
+			}
+		case ModeLoopOnly:
+			if file.Type != "loop" && file.Type != "oneshot" {
+				continue
+			}
+		case ModeFull:
+			// Include all files for full mode
+		}
+
 		// We either have a oneshot track, or a loop with an optional intro.
 		// Loops and oneshots are effectively the same, except oneshots don't loop.
-		if file.Type == "loop" {
-			ffmpegArgs = append(ffmpegArgs, "-stream_loop", "-1")
+		switch cliConfig.Mode {
+		case ModeFull:
+			if file.Type == "loop" {
+				ffmpegArgs = append(ffmpegArgs, "-stream_loop", "-1")
+			}
+		case ModeIntroOnly, ModeLoopOnly:
+			// No looping in these modes
 		}
 		ffmpegArgs = append(ffmpegArgs, "-i", file.FilePath)
 	}
@@ -256,11 +368,19 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	//// Assemble -filter_complex
 	// Set up inputs
 	filter := strings.Builder{}
-	if hasIntro {
+	switch cliConfig.Mode {
+	case ModeIntroOnly:
 		filter.WriteString("[0]anull[intro];")
-		filter.WriteString("[1]anull[loop];")
-	} else {
+	case ModeLoopOnly:
 		filter.WriteString("[0]anull[loop];")
+	case ModeFull:
+		// full mode
+		if hasIntro {
+			filter.WriteString("[0]anull[intro];")
+			filter.WriteString("[1]anull[loop];")
+		} else {
+			filter.WriteString("[0]anull[loop];")
+		}
 	}
 
 	trackFilter, err := generateTrackFilter(track, cliConfig)
@@ -271,9 +391,18 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 
 	ffmpegArgs = append(ffmpegArgs, "-filter_complex", filter.String())
 
-	// Add output file name
+	// Add output file name with mode suffix
 	ffmpegArgs = append(ffmpegArgs, "-compression_level", "12")
-	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
+	outputSuffix := ""
+	switch cliConfig.Mode {
+	case ModeIntroOnly:
+		outputSuffix = "_intro"
+	case ModeLoopOnly:
+		outputSuffix = "_loop"
+	case ModeFull:
+		// No suffix for full mode
+	}
+	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix%s.flac", track.TrackNo, outputSuffix))
 	ffmpegArgs = append(ffmpegArgs, outputPath)
 
 	fmt.Printf("ffmpeg command: %v\n", ffmpegArgs)
@@ -288,27 +417,47 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 func generateTrackFilter(track *TrackFiles, cliConfig *CliConfig) (string, error) {
 	filter := strings.Builder{}
 
-	if !track.HasOneshot() {
-		loopPlan, err := planLoops(cliConfig, *track)
-		if err != nil {
-			return "", fmt.Errorf("failed to plan loops for track %d: %w", track.TrackNo, err)
+	switch cliConfig.Mode {
+	case ModeIntroOnly:
+		if !track.HasIntro() {
+			return "", fmt.Errorf("intro-only mode selected but track has no intro")
 		}
-		filter.WriteString(generateLoopFadeFilters(loopPlan))
+		filter.WriteString("[intro]anull;") // Sink intro label to output to avoid error
+		return filter.String(), nil
 
-		if track.HasIntro() {
-			filter.WriteString("[intro][body][fade]concat=n=3:v=0:a=1;")
-		} else {
-			filter.WriteString("[body][fade]concat=v=0:a=1;")
+	case ModeLoopOnly:
+		if !track.HasLoop() && !track.HasOneshot() {
+			return "", fmt.Errorf("loop-only mode selected but track has no loop or oneshot")
 		}
-	} else {
-		if track.HasIntro() {
-			filter.WriteString("[intro][loop]concat=v=0:a=1;")
+		// For loop-only, just output one loop with no fade
+		filter.WriteString("[loop]anull;") // Sink loop label to output to avoid error
+		return filter.String(), nil
+
+	case ModeFull:
+		// Handle full mode
+		if !track.HasOneshot() {
+			loopPlan, err := planLoops(cliConfig, *track)
+			if err != nil {
+				return "", fmt.Errorf("failed to plan loops for track %d: %w", track.TrackNo, err)
+			}
+			filter.WriteString(generateLoopFadeFilters(loopPlan))
+
+			if track.HasIntro() {
+				filter.WriteString("[intro][body][fade]concat=n=3:v=0:a=1;")
+			} else {
+				filter.WriteString("[body][fade]concat=v=0:a=1;")
+			}
 		} else {
-			filter.WriteString("[loop]anull;") // Sink hanging loop label to output to avoid error
+			if track.HasIntro() {
+				filter.WriteString("[intro][loop]concat=v=0:a=1;")
+			} else {
+				filter.WriteString("[loop]anull;") // Sink hanging loop label to output to avoid error
+			}
 		}
+		return filter.String(), nil
 	}
 
-	return filter.String(), nil
+	return "", fmt.Errorf("unknown mode")
 }
 
 func generateLoopFadeFilters(loopPlan *LoopPlan) string {

@@ -218,6 +218,7 @@ func mix12ChannelTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	ffmpegArgs = append(ffmpegArgs, "-filter_complex", filter.String())
 
 	// Add output file name
+	ffmpegArgs = append(ffmpegArgs, "-compression_level", "12")
 	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
 	ffmpegArgs = append(ffmpegArgs, outputPath)
 
@@ -271,6 +272,7 @@ func mixStereoTrack(cliConfig *CliConfig, track *TrackFiles) error {
 	ffmpegArgs = append(ffmpegArgs, "-filter_complex", filter.String())
 
 	// Add output file name
+	ffmpegArgs = append(ffmpegArgs, "-compression_level", "12")
 	outputPath := path.Join(cliConfig.OutputDirectory, fmt.Sprintf("%d_mix.flac", track.TrackNo))
 	ffmpegArgs = append(ffmpegArgs, outputPath)
 
